@@ -12,7 +12,7 @@ from apex.parallel import DistributedDataParallel
 from warpctc_pytorch import CTCLoss
 
 from data.data_loader import AudioDataLoader, SpectrogramDataset, BucketingSampler, DistributedBucketingSampler
-from decoder import GreedyDecoder
+from decoder import BeamCTCDecoder, GreedyDecoder
 from logger import VisdomLogger, TensorBoardLogger
 from model import DeepSpeech, supported_rnns
 from test import evaluate
@@ -125,6 +125,8 @@ if __name__ == '__main__':
     args.distributed = args.world_size > 1
     main_proc = True
     device = torch.device("cuda" if args.cuda else "cpu")
+    #ptab changed:
+    #args.rank = 5
     if args.distributed:
         if args.gpu_rank:
             torch.cuda.set_device(int(args.gpu_rank))
@@ -187,8 +189,13 @@ if __name__ == '__main__':
                            rnn_type=supported_rnns[rnn_type],
                            audio_conf=audio_conf,
                            bidirectional=args.bidirectional)
+    #ptab updated decoder to use Norwegian sennheiser n-gram model
+    #decoder = BeamCTCDecoder(labels=labels,lm_path='/s2t_torch/data/sennheiser_clean/nor_senheiser.klm', alpha=1.3, beta=0.15, beam_width=32)
+    
+    decoder = GreedyDecoder(labels, blank_index=labels.index('_'))
+    # decoder = BeamCTCDecoder(labels=labels,lm_path='/s2t_torch/lm/lm13_5_pab.binary', alpha=1.97, beta=4.36, beam_width=1024, blank_index=labels.index('_'))
+    target_decoder = GreedyDecoder(labels, blank_index=labels.index('_'))
 
-    decoder = GreedyDecoder(labels)
     train_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.train_manifest, labels=labels,
                                        normalize=True, speed_volume_perturb=args.speed_volume_perturb,
                                        spec_augment=args.spec_augment)
@@ -315,7 +322,7 @@ if __name__ == '__main__':
                                              device=device,
                                              model=model,
                                              decoder=decoder,
-                                             target_decoder=decoder)
+                                             target_decoder=target_decoder) # ptab target_decoder orig: decoder (greedy one)
         loss_results[epoch] = avg_loss
         wer_results[epoch] = wer
         cer_results[epoch] = cer

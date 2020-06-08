@@ -129,7 +129,7 @@ class Lookahead(nn.Module):
 
 class DeepSpeech(nn.Module):
     def __init__(self, rnn_type=nn.LSTM, labels="abc", rnn_hidden_size=768, nb_layers=5, audio_conf=None,
-                 bidirectional=True, context=20, conv_layers=3):
+                 bidirectional=True, context=20):
         super(DeepSpeech, self).__init__()
 
         # model metadata needed for serialization/deserialization
@@ -147,50 +147,19 @@ class DeepSpeech(nn.Module):
         window_size = self.audio_conf.get("window_size", 0.02)
         num_classes = len(self.labels)
 
+        self.conv = MaskConv(nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=(41, 11), stride=(2, 2), padding=(20, 5)),
+            nn.BatchNorm2d(32),
+            nn.Hardtanh(0, 20, inplace=True),
+            nn.Conv2d(32, 32, kernel_size=(21, 11), stride=(2, 1), padding=(10, 5)),
+            nn.BatchNorm2d(32),
+            nn.Hardtanh(0, 20, inplace=True)
+        ))
         # Based on above convolutions and spectrogram size using conv formula (W - F + 2P)/ S+1
         rnn_input_size = int(math.floor((sample_rate * window_size) / 2) + 1)
         rnn_input_size = int(math.floor(rnn_input_size + 2 * 20 - 41) / 2 + 1)
-
-        if conv_layers == 1:
-            self.conv = MaskConv(nn.Sequential(
-                nn.Conv2d(1, 32, kernel_size=(41, 11), stride=(2, 2), padding=(20, 5)),
-                nn.BatchNorm2d(32),
-                nn.Hardtanh(0, 20, inplace=True),
-            )
-            )
-
-            rnn_input_size *= 32
-
-        elif conv_layers == 2:
-            self.conv = MaskConv(nn.Sequential(
-                nn.Conv2d(1, 32, kernel_size=(41, 11), stride=(2, 2), padding=(20, 5)),
-                nn.BatchNorm2d(32),
-                nn.Hardtanh(0, 20, inplace=True),
-                nn.Conv2d(32, 32, kernel_size=(21, 11), stride=(2, 1), padding=(10, 5)),
-                nn.BatchNorm2d(32),
-                nn.Hardtanh(0, 20, inplace=True)
-            )
-            )
-
-            rnn_input_size = int(math.floor(rnn_input_size + 2 * 10 - 21) / 2 + 1)
-            rnn_input_size *= 32
-
-        elif conv_layers == 3:
-            self.conv = MaskConv(nn.Sequential(
-                nn.Conv2d(1, 32, kernel_size=(41, 11), stride=(2, 2), padding=(20, 5)),
-                nn.BatchNorm2d(32),
-                nn.Hardtanh(0, 20, inplace=True),
-                nn.Conv2d(32, 32, kernel_size=(21, 11), stride=(2, 1), padding=(10, 5)),
-                nn.BatchNorm2d(32),
-                nn.Hardtanh(0, 20, inplace=True),
-                nn.Conv2d(32, 96, kernel_size=(21, 11), stride=(2, 1), padding=(10, 5)),
-                nn.BatchNorm2d(96),
-                nn.Hardtanh(0, 20, inplace=True)
-            )
-            )
-            rnn_input_size = int(math.floor(rnn_input_size + 2 * 10 - 21) / 2 + 1)
-            rnn_input_size = int(math.floor(rnn_input_size + 2 * 10 - 21) / 2 + 1)
-            rnn_input_size *= 96
+        rnn_input_size = int(math.floor(rnn_input_size + 2 * 10 - 21) / 2 + 1)
+        rnn_input_size *= 32
 
         rnns = []
         rnn = BatchRNN(input_size=rnn_input_size, hidden_size=rnn_hidden_size, rnn_type=rnn_type,
@@ -263,8 +232,7 @@ class DeepSpeech(nn.Module):
         for x in model.rnns:
             x.flatten_parameters()
         return model
-    # ptab to adjust for reading DanSpeechModels:
-    
+
     @classmethod
     def load_model_package(cls, package):
         model = cls(rnn_hidden_size=package['hidden_size'],
@@ -275,20 +243,7 @@ class DeepSpeech(nn.Module):
                     bidirectional=package.get('bidirectional', True))
         model.load_state_dict(package['state_dict'])
         return model
-     
-    '''
-    @classmethod
-    def load_model_package(cls, package):
-        model = cls(rnn_hidden_size=package['rnn_hidden_size'],
-                    nb_layers=package['rnn_layers'],
-                    labels=package['labels'],
-                    audio_conf=package['audio_conf'],
-                    rnn_type=supported_rnns[package['rnn_type']],
-                    bidirectional=package.get('bidirectional', True))
-        model.load_state_dict(package['state_dict'])
-        return model
-    '''
-    
+
     @staticmethod
     def serialize(model, optimizer=None, amp=None, epoch=None, iteration=None, loss_results=None,
                   cer_results=None, wer_results=None, avg_loss=None, meta=None):

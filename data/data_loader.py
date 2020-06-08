@@ -56,17 +56,18 @@ class NoiseInjection(object):
         Adds noise to an input signal with specific SNR. Higher the noise level, the more noise added.
         Modified code from https://github.com/willfrey/audio/blob/master/torchaudio/transforms.py
         """
-        if not os.path.exists(path):
-            print("Directory doesn't exist: {}".format(path))
-            raise IOError
-        self.paths = path is not None and librosa.util.find_files(path)
-        self.sample_rate = sample_rate
-        self.noise_levels = noise_levels
+        #if not os.path.exists(path):
+        #    print("Directory doesn't exist: {}".format(path))
+        #    raise IOError
+        #self.paths = path is not None and librosa.util.find_files(path)
+        #self.sample_rate = sample_rate
+        #self.noise_levels = noise_levels
 
     def inject_noise(self, data):
-        noise_path = np.random.choice(self.paths)
-        noise_level = np.random.uniform(*self.noise_levels)
-        return self.inject_noise_sample(data, noise_path, noise_level)
+        # ptab noise_path = np.random.choice(self.paths)
+        # ptab noise_level = np.random.uniform(*self.noise_levels)
+        # ptab return self.inject_noise_sample(data, noise_path, noise_level)
+        return self.add_wn(data)
 
     def inject_noise_sample(self, data, noise_path, noise_level):
         noise_len = get_audio_length(noise_path)
@@ -80,7 +81,26 @@ class NoiseInjection(object):
         data += noise_level * noise_dst * data_energy / noise_energy
         return data
 
+    def add_wn(self, recording, *args):
+        """
+            Add wn white noise with random variance to recording
+            :param recording:
+            :return: Augmented recording
+        """
+        # Normalize recording before adding wn
+        mean = np.mean(recording)
+        std = np.std(recording)
+        if std !=0:
+            recording = (recording - mean) / std  
 
+            variance = np.random.uniform(low=0.01, high=0.02)
+            noise = np.random.normal(0, np.random.uniform(0, variance), len(recording))
+            # append noise to signal
+            res = recording + noise
+        else:
+            res = recording
+        return res
+        
 class SpectrogramParser(AudioParser):
     def __init__(self, audio_conf, normalize=False, speed_volume_perturb=False, spec_augment=False):
         """
@@ -99,37 +119,52 @@ class SpectrogramParser(AudioParser):
         self.speed_volume_perturb = speed_volume_perturb
         self.spec_augment = spec_augment
         self.noiseInjector = NoiseInjection(audio_conf['noise_dir'], self.sample_rate,
-                                            audio_conf['noise_levels']) if audio_conf.get(
-            'noise_dir') is not None else None
+                                            audio_conf['noise_levels']) if audio_conf.get('noise_dir') is not None else NoiseInjection(None,self.sample_rate)  # ptab
         self.noise_prob = audio_conf.get('noise_prob')
 
     def parse_audio(self, audio_path):
         if self.speed_volume_perturb:
             y = load_randomly_augmented_audio(audio_path, self.sample_rate)
         else:
+            #ptab
+            print(audio_path)
             y = load_audio(audio_path)
-        if self.noiseInjector:
-            add_noise = np.random.binomial(1, self.noise_prob)
+        if self.noiseInjector and self.speed_volume_perturb:  #ptab: to avoid adding noise when testing
+            #add_noise = np.random.binomial(1, float(self.noise_prob)) orig
+            add_noise = np.random.binomial(1, 0.4) # ptab
             if add_noise:
                 y = self.noiseInjector.inject_noise(y)
         n_fft = int(self.sample_rate * self.window_size)
         win_length = n_fft
         hop_length = int(self.sample_rate * self.window_stride)
+        
+        # ptab: experiment:
+     
         # STFT
-        D = librosa.stft(y, n_fft=n_fft, hop_length=hop_length,
+        S = librosa.stft(y, n_fft=n_fft, hop_length=hop_length,
                          win_length=win_length, window=self.window)
-        spect, phase = librosa.magphase(D)
-        # S = log(S+1)
+        
+        #D = np.abs(D)**2  # ptab, orig was nothing
+        #S = librosa.feature.melspectrogram(S=D)
+        
+        # orig: spect, phase = librosa.magphase(D)
+        spect, phase = librosa.magphase(S)
+        # S = log(S+1) #ptab: it is not mel spectrogram we use here!!! It is just log scale ... anyway!
         spect = np.log1p(spect)
+
+        
         spect = torch.FloatTensor(spect)
         if self.normalize:
             mean = spect.mean()
             std = spect.std()
             spect.add_(-mean)
             spect.div_(std)
-
+        
+        # ptab: copied parameters to be able to handle level of noise if needed
+        # ptab Orig: time_warping_para=40, frequency_masking_para=27,time_masking_para=70, frequency_mask_num=1, time_mask_num=1)
         if self.spec_augment:
-            spect = spec_augment(spect)
+            spect = spec_augment(mel_spectrogram=spect, time_warping_para=20, frequency_masking_para=14,
+                 time_masking_para=35, frequency_mask_num=1, time_mask_num=1)
 
         return spect
 

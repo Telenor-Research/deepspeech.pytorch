@@ -38,7 +38,6 @@ def evaluate(test_loader, device, model, decoder, target_decoder, save_output=No
             offset += size
 
         out, output_sizes = model(inputs, input_sizes)
-
         decoded_output, _ = decoder.decode(out, output_sizes)
         target_strings = target_decoder.convert_to_strings(split_targets)
 
